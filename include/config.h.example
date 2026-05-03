@@ -1,0 +1,101 @@
+/*
+ * config.h.example
+ *
+ * Template for site-specific configuration. Copy this file to config.h and
+ * fill in your own values before building. config.h is excluded from git to
+ * protect credentials — never commit the real file.
+ *
+ * Steps:
+ *   cp include/config.h.example include/config.h
+ *   # edit config.h with your WiFi, MQTT, and OTA settings
+ *   pio run --target upload
+ */
+
+#pragma once
+
+// ============================================================
+// WiFi Configuration
+// ============================================================
+#define WIFI_SSID         "YourNetworkName"
+#define WIFI_PASSWORD     "YourWiFiPassword"
+
+// ============================================================
+// MQTT Configuration
+// ============================================================
+// MQTT_SERVER must be the static LAN IP of your Home Assistant host.
+// The default HA MQTT broker (Mosquitto add-on) listens on port 1883.
+#define MQTT_SERVER       "192.168.1.100"   // Your Home Assistant IP
+#define MQTT_PORT         1883
+#define MQTT_USER         "mqtt_user"
+#define MQTT_PASSWORD     "your_mqtt_password"
+
+// Client ID must be unique on the broker; duplicate IDs cause disconnect loops.
+#define MQTT_CLIENT_ID    "pentair-controller"
+
+// Prefix prepended to every MQTT topic published or subscribed by this device.
+// All topics follow the pattern: MQTT_TOPIC_PREFIX/subsystem/field
+#define MQTT_TOPIC_PREFIX "pentair"
+
+// ============================================================
+// RS485 Pin Configuration (ESP32-S3 → MAX485)
+// ============================================================
+// The MAX485 is half-duplex. DE (driver enable) and RE (receiver enable) are
+// tied together and driven from a single GPIO. HIGH = transmit, LOW = receive.
+#define RS485_RX_PIN      18    // MAX485 RO  → ESP32 GPIO18
+#define RS485_TX_PIN      17    // MAX485 DI  → ESP32 GPIO17
+#define RS485_DE_RE_PIN   16    // MAX485 DE+RE (joined) → ESP32 GPIO16
+
+// UART1 is used because UART0 is reserved for USB CDC on the ESP32-S3.
+#define RS485_UART_NUM    1
+
+// ============================================================
+// Pentair Protocol Configuration
+// ============================================================
+#define PENTAIR_BAUD_RATE 9600
+
+// Device addresses on the Pentair RS485 bus.
+#define ADDR_BROADCAST    0x0F  // A5 broadcast address
+#define ADDR_INTELLITOUCH 0x10  // IntelliConnect controller
+#define ADDR_PUMP         0x60  // IntelliFlo VS pump
+#define ADDR_CHLORINATOR  0x50  // IntelliChlor salt chlorinator
+#define ADDR_THIS_DEVICE  0x20  // Our ESP32 (wireless remote address)
+
+// ============================================================
+// IntelliFlo VS Pump Speed Programs
+// ============================================================
+#define PUMP_PROG_STOP   0x00
+#define PUMP_PROG_1      0x08   // Low
+#define PUMP_PROG_2      0x10   // Normal
+#define PUMP_PROG_3      0x18   // High
+#define PUMP_PROG_4      0x20   // Max
+
+// ============================================================
+// UDP Debug Log Configuration
+// ============================================================
+#define UDP_LOG_PORT      4210
+
+// ============================================================
+// OTA (Over-The-Air) Firmware Update Configuration
+// ============================================================
+#define OTA_HOSTNAME      "pentair-controller"
+#define OTA_PASSWORD      "change-me-before-deploying"
+
+// ============================================================
+// NTP / Time Configuration
+// ============================================================
+// NTP_UTC_OFFSET_SEC: your local UTC offset in seconds (not counting DST).
+//   PDT = UTC-7: -7*3600 = -25200
+//   PST = UTC-8: -8*3600 = -28800
+//   EDT = UTC-4: -4*3600 = -14400
+#define NTP_SERVER            "pool.ntp.org"
+#define NTP_UTC_OFFSET_SEC    (-7 * 3600)   // Change for your timezone
+#define NTP_DST_OFFSET_SEC    0
+
+// ============================================================
+// Timing Constants
+// ============================================================
+#define WIFI_CONNECT_TIMEOUT_MS   10000
+#define MQTT_RECONNECT_INTERVAL   5000
+#define BUS_POLL_INTERVAL_MS      1000
+#define RS485_TX_DELAY_US         100
+#define RS485_TX_COMPLETE_WAIT_MS 10
