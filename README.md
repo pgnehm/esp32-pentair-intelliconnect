@@ -2,6 +2,9 @@
 
 An ESP32-S3 firmware that bridges a **Pentair IntelliConnect** pool equipment installation to **Home Assistant** over MQTT. The ESP32 taps into the pool's RS485 data bus as a passive listener, parses all equipment traffic in real time, and publishes live state to Home Assistant via MQTT auto-discovery. It can also send pump speed and chlorinator output commands directly to the equipment.
 
+<img width="226" height="427" alt="image" src="https://github.com/user-attachments/assets/8c9dc330-a91e-42b2-bda2-b546c4d1c8b9" />
+<img width="230" height="111" alt="image" src="https://github.com/user-attachments/assets/3f87ea5e-3f09-4df5-8106-41a70d2fdf95" />
+
 ---
 
 ## Table of Contents
