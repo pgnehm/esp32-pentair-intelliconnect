@@ -126,9 +126,6 @@ void MqttHandler::publishState(const PoolState& state) {
 
     char buf[16];
 
-    // Pool on/off is inferred from pump RPM (IntelliConnect does not broadcast circuit state)
-    _mqtt.publish(MQTT_TOPIC_PREFIX "/pool/state", state.poolOn ? "ON" : "OFF", true);
-
     // Water temp comes from IntelliChlor CHLOR_EXTENDED_STATUS; skip until first valid reading
     // so HA retains the last known value rather than showing 0 on boot
     if (state.waterTemp > 0) {
@@ -145,16 +142,18 @@ void MqttHandler::publishState(const PoolState& state) {
     snprintf(buf, sizeof(buf), "%d", state.pumpWatts);
     _mqtt.publish(MQTT_TOPIC_PREFIX "/pump/watts", buf, true);
 
-    // Index matches PumpSpeed enum: 0=Stop, 1=Low, 2=Normal, 3=High, 4=Max
-    const char* speedNames[] = {"Stop", "Low", "Normal", "High", "Max"};
+    // Index matches PumpSpeed enum: 0=Stop, 1=Standard, 2=Heat, 3=Cleaner, 4=Test
+    const char* speedNames[] = {"Stop", "Standard", "Heat", "Cleaner", "Test"};
     _mqtt.publish(MQTT_TOPIC_PREFIX "/pump/speed/state", speedNames[state.pumpSpeedPreset], true);
 
     // Chlorinator
     snprintf(buf, sizeof(buf), "%d", state.chlorOutput);
     _mqtt.publish(MQTT_TOPIC_PREFIX "/chlorinator/output", buf, true);
 
-    snprintf(buf, sizeof(buf), "%d", state.chlorSaltPPM);
-    _mqtt.publish(MQTT_TOPIC_PREFIX "/chlorinator/salt_ppm", buf, true);
+    if (state.chlorSaltPPM > 0) {
+        snprintf(buf, sizeof(buf), "%d", state.chlorSaltPPM);
+        _mqtt.publish(MQTT_TOPIC_PREFIX "/chlorinator/salt_ppm", buf, true);
+    }
 
     _mqtt.publish(MQTT_TOPIC_PREFIX "/chlorinator/state",      state.chlorActive      ? "ON" : "OFF", true);
     _mqtt.publish(MQTT_TOPIC_PREFIX "/chlorinator/low_salt",   state.chlorLowSalt     ? "ON" : "OFF", true);
@@ -257,11 +256,10 @@ void MqttHandler::publishDiscovery() {
         "homeassistant/sensor/pentair/heater_active/config",
         "homeassistant/sensor/pentair/last_rs485/config",
         "homeassistant/sensor/pentair/last_packet/config",
+        "homeassistant/sensor/pentair/pool/config",  // removed: redundant with Pump state
     };
     for (const char* t : staleTopics) _mqtt.publish(t, "", true);
 
-    // Pool on/off is read-only (inferred from pump RPM; IntelliConnect ignores SET commands)
-    publishSensor("pool",       "Pool",       MQTT_TOPIC_PREFIX "/pool/state", nullptr, nullptr);
     publishSensor("water_temp", "Water Temp", MQTT_TOPIC_PREFIX "/water_temp", "°F", "temperature");
 
     // Pump — speed control is writable; state/RPM/watts are read-only sensors
@@ -270,7 +268,7 @@ void MqttHandler::publishDiscovery() {
     publishSensor("pump_watts", "Pump Power", MQTT_TOPIC_PREFIX "/pump/watts", "W",    "power");
     publishSelect("pump_speed", "Pump Speed",
                   MQTT_TOPIC_PREFIX "/pump/speed/state", MQTT_TOPIC_PREFIX "/pump/speed/set",
-                  {"Stop", "Low", "Normal", "High", "Max"});
+                  {"Stop", "Standard", "Heat", "Cleaner", "Test"});
 
     // Chlorinator — output % is writable; all other fields are read-only sensors
     publishSensor("chlor_output",   "Chlorinator Output", MQTT_TOPIC_PREFIX "/chlorinator/output",     "%",   nullptr);

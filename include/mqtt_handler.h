@@ -57,6 +57,10 @@ public:
 
     bool isConnected() { return _mqtt.connected(); }
 
+    // Force the next publishState() call to bypass the rate-limit timer.
+    // Call this after sending a command so HA reflects the change immediately.
+    void forceNextPublish() { _firstPublish = true; }
+
 private:
     // Attempt one broker connection; on success calls subscribe() and publishDiscovery().
     void reconnect();

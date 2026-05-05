@@ -182,11 +182,14 @@ void processPacket(const PentairPacket& packet, PoolState& state) {
             // infer it from pump RPM — if the pump is running, the pool is on.
             state.poolOn      = state.pumpRunning;
 
-            // Map live RPM to the nearest named speed preset for MQTT reporting
-            if      (state.pumpRPM <= 1200) state.pumpSpeedPreset = PUMP_SPEED_LOW;
-            else if (state.pumpRPM <= 2000) state.pumpSpeedPreset = PUMP_SPEED_MEDIUM;
-            else if (state.pumpRPM <= 2900) state.pumpSpeedPreset = PUMP_SPEED_HIGH;
-            else                            state.pumpSpeedPreset = PUMP_SPEED_MAX;
+            // Map live RPM to the nearest named speed preset for MQTT reporting.
+            // Boundaries sit at midpoints between adjacent preset RPMs:
+            //   Standard(1650) | 1660 | Test(1670) | 1985 | Heat(2300) | 2350 | Cleaner(2400)
+            if      (state.pumpRPM == 0)    state.pumpSpeedPreset = PUMP_SPEED_STOP;
+            else if (state.pumpRPM <= 1660) state.pumpSpeedPreset = PUMP_SPEED_STANDARD;
+            else if (state.pumpRPM <= 1985) state.pumpSpeedPreset = PUMP_SPEED_TEST;
+            else if (state.pumpRPM <= 2350) state.pumpSpeedPreset = PUMP_SPEED_HEAT;
+            else                            state.pumpSpeedPreset = PUMP_SPEED_CLEANER;
 
             state.lastPumpUpdate = millis();
             break;
@@ -240,12 +243,9 @@ size_t buildPumpRemoteControl(uint8_t* buf, size_t bufSize, uint8_t src, bool re
 }
 
 size_t buildPumpProgramCommand(uint8_t* buf, size_t bufSize, uint8_t src, uint8_t program) {
-    // ACTION_PUMP_WRITE (0x01): write to pump register 0x0321 (speed program select).
-    // Data format: [regHi][regLo][0x00][value]
-    //   0x03, 0x21 = register address 0x0321
-    //   0x00       = padding / high byte of value (register is 16-bit, value fits in low byte)
-    //   program    = PUMP_PROG_STOP(0x00), PUMP_PROG_1(0x08), PUMP_PROG_2(0x10),
-    //                PUMP_PROG_3(0x18), or PUMP_PROG_4(0x20) per PACKET_SPEC.txt
+    // ACTION_PUMP_WRITE (0x01): select a speed program on pump register 0x0321.
+    // Only slot values are accepted: PUMP_PROG_STOP(0x00), and 0x08/0x10/0x18/0x20
+    // for programs 1-4. The RPM for each slot is stored in the pump's own memory.
     uint8_t data[] = { 0x03, 0x21, 0x00, program };
     return buildPacket(buf, bufSize, ADDR_PUMP, src, ACTION_PUMP_WRITE, data, sizeof(data));
 }
@@ -334,14 +334,18 @@ void processChlorPacket(const ChlorPacket& packet, PoolState& state) {
         state.lastChlorUpdate = millis();
     }
 
-    // CHLOR_EXTENDED_STATUS (0x16): the only reliable water temperature source.
-    // The controller does not broadcast water temp on this bus; the chlorinator
-    // cell has its own thermistor and includes it in this packet.
+    // CHLOR_EXTENDED_STATUS (0x16) data layout:
+    //   byte 0: water temp °F (from chlorinator cell thermistor — most accurate source)
+    //   byte 1: chlorine output % (0–100)
+    //   byte 2+: additional status flags
     if (packet.action == CHLOR_EXTENDED_STATUS) {
         if (packet.dataLen >= 1) {
             uint8_t t = packet.data[0];
-            // Sanity-check: ignore obviously invalid readings (< 33°F or > 109°F)
             if (t > 32 && t < 110) state.waterTemp = t;
+        }
+        if (packet.dataLen >= 2) {
+            state.chlorOutput = packet.data[1];
+            state.chlorActive = (packet.data[1] > 0);
         }
         state.lastChlorUpdate = millis();
     }

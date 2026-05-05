@@ -1,14 +1,12 @@
 /*
- * config.h.example
+ * config.h
  *
- * Template for site-specific configuration. Copy this file to config.h and
- * fill in your own values before building. config.h is excluded from git to
- * protect credentials — never commit the real file.
+ * All site-specific and hardware configuration for the ESP32 Pentair controller.
  *
- * Steps:
+ * SETUP: Copy this file to config.h and fill in your values.
  *   cp include/config.h.example include/config.h
- *   # edit config.h with your WiFi, MQTT, and OTA settings
- *   pio run --target upload
+ *
+ * SECURITY NOTE: config.h is listed in .gitignore and must never be committed.
  */
 
 #pragma once
@@ -16,18 +14,18 @@
 // ============================================================
 // WiFi Configuration
 // ============================================================
-#define WIFI_SSID         "YourNetworkName"
-#define WIFI_PASSWORD     "YourWiFiPassword"
+#define WIFI_SSID         "your-wifi-ssid"
+#define WIFI_PASSWORD     "your-wifi-password"
 
 // ============================================================
 // MQTT Configuration
 // ============================================================
 // MQTT_SERVER must be the static LAN IP of your Home Assistant host.
 // The default HA MQTT broker (Mosquitto add-on) listens on port 1883.
-#define MQTT_SERVER       "192.168.1.100"   // Your Home Assistant IP
+#define MQTT_SERVER       "192.168.x.x"   // Your Home Assistant IP
 #define MQTT_PORT         1883
 #define MQTT_USER         "mqtt_user"
-#define MQTT_PASSWORD     "your_mqtt_password"
+#define MQTT_PASSWORD     "your-mqtt-password"
 
 // Client ID must be unique on the broker; duplicate IDs cause disconnect loops.
 #define MQTT_CLIENT_ID    "pentair-controller"
@@ -41,44 +39,67 @@
 // ============================================================
 // The MAX485 is half-duplex. DE (driver enable) and RE (receiver enable) are
 // tied together and driven from a single GPIO. HIGH = transmit, LOW = receive.
+// MAX485 requires a 5V VCC supply; 3.3V GPIO logic levels still drive it
+// reliably because the MAX485 input threshold is below 3.3V.
 #define RS485_RX_PIN      18    // MAX485 RO  → ESP32 GPIO18
 #define RS485_TX_PIN      17    // MAX485 DI  → ESP32 GPIO17
 #define RS485_DE_RE_PIN   16    // MAX485 DE+RE (joined) → ESP32 GPIO16
 
 // UART1 is used because UART0 is reserved for USB CDC on the ESP32-S3.
+// Using UART0 would interfere with the Serial monitor and USB flashing.
 #define RS485_UART_NUM    1
 
 // ============================================================
 // Pentair Protocol Configuration
 // ============================================================
+// All Pentair RS485 equipment communicates at 9600 baud, 8N1, no flow control.
 #define PENTAIR_BAUD_RATE 9600
 
 // Device addresses on the Pentair RS485 bus.
+// These values are industry-standard Pentair defaults and should not need
+// changing unless you have unusual equipment or address conflicts.
 #define ADDR_BROADCAST    0x0F  // A5 broadcast address
-#define ADDR_INTELLITOUCH 0x10  // IntelliConnect controller
+#define ADDR_INTELLITOUCH 0x10  // IntelliConnect controller (also used by IntelliTouch)
 #define ADDR_PUMP         0x60  // IntelliFlo VS pump
 #define ADDR_CHLORINATOR  0x50  // IntelliChlor salt chlorinator
+// 0x20 is the address range reserved for wireless remotes/keypads.
+// The ESP32 uses this to identify itself when sending pump/chlorinator commands.
 #define ADDR_THIS_DEVICE  0x20  // Our ESP32 (wireless remote address)
 
 // ============================================================
-// IntelliFlo VS Pump Speed Programs
+// IntelliFlo VS Pump Speed Setpoints
 // ============================================================
-#define PUMP_PROG_STOP   0x00
-#define PUMP_PROG_1      0x08   // Low
-#define PUMP_PROG_2      0x10   // Normal
-#define PUMP_PROG_3      0x18   // High
-#define PUMP_PROG_4      0x20   // Max
+// Speed is commanded by sending ACTION_PUMP_MODE (circuit number) + ACTION_PUMP_RUN (0x0A),
+// exactly replicating what the IntelliConnect does. No remote-control handshake needed.
+// Circuit numbers confirmed from bus captures (watch [PUMP_MODE] log lines while changing
+// speed in the IntelliConnect app to discover any unknown values).
+// Pump program index = MODE - 1: program 1=Standard, 2=Heat, 3=Cleaner, 4=Test
+#define PUMP_CIRCUIT_STANDARD  2    // Program 1 — verify with [PUMP_MODE] log
+#define PUMP_CIRCUIT_CLEANER   4    // Program 3 — verify with [PUMP_MODE] log
+#define PUMP_CIRCUIT_HEAT      3    // Program 2 — verify with [PUMP_MODE] log
+#define PUMP_CIRCUIT_TEST      5    // Program 4 — verify with [PUMP_MODE] log
+
+// RPM targets used only for display — mapping live RPM to a preset name in HA.
+// Update these if you change speeds in the IntelliConnect app.
+#define PUMP_RPM_STANDARD  1650
+#define PUMP_RPM_HEAT      2300
+#define PUMP_RPM_CLEANER   2400
+#define PUMP_RPM_TEST      1670
 
 // ============================================================
 // UDP Debug Log Configuration
 // ============================================================
+// Messages are broadcast to 255.255.255.255:UDP_LOG_PORT.
+// Receive on any PC: nc -u -l 4210  (Linux/macOS)
 #define UDP_LOG_PORT      4210
 
 // ============================================================
 // OTA (Over-The-Air) Firmware Update Configuration
 // ============================================================
+// Set OTA_HOSTNAME and assign a static DHCP lease for that hostname in your router.
+// To upload: pio run --target upload --upload-port <device-ip>
 #define OTA_HOSTNAME      "pentair-controller"
-#define OTA_PASSWORD      "change-me-before-deploying"
+#define OTA_PASSWORD      "change-me"
 
 // ============================================================
 // NTP / Time Configuration
@@ -87,8 +108,10 @@
 //   PDT = UTC-7: -7*3600 = -25200
 //   PST = UTC-8: -8*3600 = -28800
 //   EDT = UTC-4: -4*3600 = -14400
+// NTP_DST_OFFSET_SEC: additional DST offset. Leave at 0 and adjust
+//   NTP_UTC_OFFSET_SEC seasonally, or set to 3600 and use the standard offset.
 #define NTP_SERVER            "pool.ntp.org"
-#define NTP_UTC_OFFSET_SEC    (-7 * 3600)   // Change for your timezone
+#define NTP_UTC_OFFSET_SEC    (-7 * 3600)   // PDT (UTC-7); adjust for your timezone
 #define NTP_DST_OFFSET_SEC    0
 
 // ============================================================

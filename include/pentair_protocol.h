@@ -92,18 +92,18 @@ enum HeatMode : uint8_t {
 };
 
 // ============================================================
-// Pump speed presets — friendly labels mapped from observed RPM ranges
+// Pump speed presets — named programs configured in the IntelliConnect
 // ============================================================
-// These are display/reporting labels derived from live RPM readings; they do
-// not correspond 1:1 to pump programs. The RPM boundaries are chosen to match
-// this installation's four programs (1000 / 1640 / 2315 / 3450 RPM).
+// These labels match the four programs set on this installation.
+// Boundaries sit at the midpoint between adjacent preset RPMs.
+// Standard (1650) and Test (1670) are close; the boundary is at 1660.
 // The enum index also matches the speedNames[] array in mqtt_handler.cpp.
 enum PumpSpeed : uint8_t {
-    PUMP_SPEED_STOP   = 0,  // RPM == 0
-    PUMP_SPEED_LOW    = 1,  // RPM  1 – 1200  (Program 1 on this system: ~1000 RPM)
-    PUMP_SPEED_MEDIUM = 2,  // RPM  1201–2000 (Program 2 on this system: ~1640 RPM)
-    PUMP_SPEED_HIGH   = 3,  // RPM  2001–2900 (Program 3 on this system: ~2315-2420 RPM)
-    PUMP_SPEED_MAX    = 4,  // RPM  > 2900    (Program 4 on this system: up to ~3450 RPM)
+    PUMP_SPEED_STOP     = 0,  // RPM == 0
+    PUMP_SPEED_STANDARD = 1,  // RPM    1-1660  (Standard ~1650 RPM)
+    PUMP_SPEED_HEAT     = 2,  // RPM 1986-2350  (Heat     ~2300 RPM)
+    PUMP_SPEED_CLEANER  = 3,  // RPM  > 2350    (Cleaner  ~2400 RPM)
+    PUMP_SPEED_TEST     = 4,  // RPM 1661-1985  (Test     ~1670 RPM)
 };
 
 // ============================================================
@@ -208,7 +208,8 @@ namespace Pentair {
     size_t buildPumpRemoteControl(uint8_t* buf, size_t bufSize,
                                   uint8_t src, bool remote);
 
-    // Step 2/3 of pump speed change: write program register 0x0321 with program value
+    // Step 2/3 of pump speed change: select a program slot on register 0x0321.
+    // program = PUMP_PROG_STOP / PUMP_PROG_STANDARD / PUMP_PROG_HEAT / etc.
     size_t buildPumpProgramCommand(uint8_t* buf, size_t bufSize,
                                    uint8_t src, uint8_t program);
 

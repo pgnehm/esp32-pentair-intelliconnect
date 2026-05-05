@@ -79,28 +79,46 @@ void handleMqttCommand(const char* topic, const char* payload) {
         return;
     }
     else if (t.endsWith("/pump/speed/set")) {
-        // Pump speed change requires a 3-step sequence to avoid the pump
-        // ignoring the command: (1) take remote control, (2) write the
-        // program register, (3) release remote control back to local.
-        uint8_t prog = PUMP_PROG_1;  // Default to Low if payload is unrecognized
-        if      (strcmp(payload, "Normal") == 0) prog = PUMP_PROG_2;
-        else if (strcmp(payload, "High")   == 0) prog = PUMP_PROG_3;
-        else if (strcmp(payload, "Max")    == 0) prog = PUMP_PROG_4;
-        else if (strcmp(payload, "Stop")   == 0) prog = PUMP_PROG_STOP;
+        // Pump speed change: mimic IntelliConnect's exact protocol.
+        // IC sends ACTION_PUMP_MODE (circuit number) + ACTION_PUMP_RUN (0x0A to run, 0x04 to stop).
+        // Do NOT use REMOTE_TAKE — it causes IC to detect a bus takeover and restart its sequence.
+        if (strcmp(payload, "Stop") == 0) {
+            uint8_t runData[] = { 0x04 };
+            uint8_t pkt[16];
+            size_t len = Pentair::buildPacket(pkt, sizeof(pkt), ADDR_PUMP, ADDR_THIS_DEVICE,
+                                              ACTION_PUMP_RUN, runData, 1);
+            if (len) rs485.sendPacket(pkt, len);
+            UdpLog.printf("[CMD] Pump stop sent\n");
+        } else {
+            uint8_t circuit = PUMP_CIRCUIT_STANDARD;
+            if      (strcmp(payload, "Standard") == 0) circuit = PUMP_CIRCUIT_STANDARD;
+            else if (strcmp(payload, "Heat")     == 0) circuit = PUMP_CIRCUIT_HEAT;
+            else if (strcmp(payload, "Cleaner")  == 0) circuit = PUMP_CIRCUIT_CLEANER;
+            else if (strcmp(payload, "Test")     == 0) circuit = PUMP_CIRCUIT_TEST;
 
-        uint8_t step1[16], step2[16], step3[16];
-        size_t l1 = Pentair::buildPumpRemoteControl(step1, sizeof(step1), ADDR_THIS_DEVICE, true);
-        size_t l2 = Pentair::buildPumpProgramCommand(step2, sizeof(step2), ADDR_THIS_DEVICE, prog);
-        size_t l3 = Pentair::buildPumpRemoteControl(step3, sizeof(step3), ADDR_THIS_DEVICE, false);
-
-        if (l1 && l2 && l3) {
-            rs485.sendPacket(step1, l1);
-            delay(100);  // Brief pause between commands — pump needs time to process each step
-            rs485.sendPacket(step2, l2);
-            delay(100);
-            rs485.sendPacket(step3, l3);
-            UdpLog.printf("[CMD] Pump speed set to %s\n", payload);
+            uint8_t modeData[] = { circuit };
+            uint8_t runData[]  = { 0x0A };
+            uint8_t step1[16], step2[16];
+            size_t l1 = Pentair::buildPacket(step1, sizeof(step1), ADDR_PUMP, ADDR_THIS_DEVICE,
+                                              ACTION_PUMP_MODE, modeData, 1);
+            size_t l2 = Pentair::buildPacket(step2, sizeof(step2), ADDR_PUMP, ADDR_THIS_DEVICE,
+                                              ACTION_PUMP_RUN, runData, 1);
+            if (l1 && l2) {
+                rs485.sendPacket(step1, l1);
+                delay(100);
+                rs485.sendPacket(step2, l2);
+                UdpLog.printf("[CMD] Pump speed set to %s (circuit 0x%02X)\n", payload, circuit);
+            }
         }
+        // Optimistically update speed preset so HA reflects the change immediately,
+        // without waiting for the pump's next STATUS packet and the 2-second publish interval.
+        PumpSpeed preset = PUMP_SPEED_STOP;
+        if      (strcmp(payload, "Standard") == 0) preset = PUMP_SPEED_STANDARD;
+        else if (strcmp(payload, "Heat")     == 0) preset = PUMP_SPEED_HEAT;
+        else if (strcmp(payload, "Cleaner")  == 0) preset = PUMP_SPEED_CLEANER;
+        else if (strcmp(payload, "Test")     == 0) preset = PUMP_SPEED_TEST;
+        poolState.pumpSpeedPreset = preset;
+        mqtt.forceNextPublish();
         return;
     }
     else if (t.endsWith("/chlorinator/set")) {
@@ -178,6 +196,49 @@ void loop() {
     if (rs485.hasPacket()) {
         PentairPacket pkt = rs485.getPacket();
         printPacketDebug(pkt);
+
+        // ---- Pump protocol decoder ----
+        // action=0x02 to pump = register READ request (2-byte address)
+        // action=0x02 from pump = register READ response (2-byte value)
+        // action=0x01 to pump = register WRITE (4 bytes: addr hi/lo, val hi/lo)
+        // action=0x05 to pump = set operating MODE
+        // action=0x06 to pump = RUN/STOP command
+        // action=0x04 to pump = remote control TAKE (0xFF) or RELEASE (0x00)
+        static uint16_t _lastRegAddr = 0;  // correlates read request with response
+
+        if (pkt.dst == ADDR_PUMP) {
+            if (pkt.action == ACTION_PUMP_WRITE && pkt.dataLen >= 4) {
+                uint16_t reg = ((uint16_t)pkt.data[0] << 8) | pkt.data[1];
+                uint16_t val = ((uint16_t)pkt.data[2] << 8) | pkt.data[3];
+                UdpLog.printf("[PUMP_WRITE] from=0x%02X reg=0x%04X val=0x%04X (%u)\n",
+                              pkt.src, reg, val, val);
+            } else if (pkt.action == ACTION_STATUS_RESPONSE && pkt.dataLen == 2) {
+                // 0x02 to pump with 2 bytes = register read request
+                _lastRegAddr = ((uint16_t)pkt.data[0] << 8) | pkt.data[1];
+            } else if (pkt.action == ACTION_PUMP_MODE && pkt.dataLen >= 1) {
+                UdpLog.printf("[PUMP_MODE] from=0x%02X mode=0x%02X\n", pkt.src, pkt.data[0]);
+            } else if (pkt.action == ACTION_PUMP_RUN && pkt.dataLen >= 1) {
+                UdpLog.printf("[PUMP_RUN] from=0x%02X val=0x%02X\n", pkt.src, pkt.data[0]);
+            } else if (pkt.action == ACTION_PUMP_REMOTE && pkt.dataLen >= 1) {
+                UdpLog.printf("[PUMP_CTRL] from=0x%02X %s\n", pkt.src,
+                              pkt.data[0] == 0xFF ? "TAKE_REMOTE" : "RELEASE");
+            }
+        } else if (pkt.src == ADDR_PUMP) {
+            if (pkt.action == ACTION_STATUS_RESPONSE && pkt.dataLen == 2) {
+                // 0x02 from pump with 2 bytes = register read response
+                uint16_t val = ((uint16_t)pkt.data[0] << 8) | pkt.data[1];
+                UdpLog.printf("[PUMP_REG] 0x%04X = 0x%04X (%u)\n", _lastRegAddr, val, val);
+            } else if (pkt.action == ACTION_PUMP_STATUS && pkt.dataLen >= 7) {
+                static uint16_t _lastRPM = 0xFFFF;
+                uint16_t rpm   = ((uint16_t)pkt.data[5] << 8) | pkt.data[6];
+                uint16_t watts = ((uint16_t)pkt.data[3] << 8) | pkt.data[4];
+                if (rpm != _lastRPM) {
+                    UdpLog.printf("[PUMP_STATUS] rpm=%u watts=%u\n", rpm, watts);
+                    _lastRPM = rpm;
+                }
+            }
+        }
+
         Pentair::processPacket(pkt, poolState);
         mqtt.publishState(poolState);
     }
